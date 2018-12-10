@@ -1,0 +1,173 @@
+#!/usr/bin/python
+
+import argparse
+from subprocess import Popen, PIPE, call, run
+import sys
+import os
+import json
+import configparser
+
+# Abstract to some function or something
+config = configparser.ConfigParser()
+config.read(os.path.expanduser("~/.config/screenshottool.conf"))
+config = config['main']
+
+
+def main():
+    args = parse_arguments()
+    args.func(args)
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(title='action')
+    interface_parser = subparsers.add_parser('interface')
+    interface_parser.set_defaults(func=show_interface)
+    grab_region_parser = subparsers.add_parser('grab_region')
+    grab_region_parser.set_defaults(func=grab_region)
+    grab_monitor_parser = subparsers.add_parser('grab_monitor')
+    grab_monitor_parser.set_defaults(func=grab_monitor)
+
+    args = parser.parse_args()
+    if 'func' not in args:
+        parser.print_help()
+        sys.exit(1)
+
+    return args
+
+
+def show_interface(args):
+    options = {
+        'Selection': grab_region,
+        'Monitor': grab_monitor,
+        'Everything': grab_everything
+    }
+    option = dmenu('Action', options.keys())
+
+    options[option](args)
+
+
+def grab_everything(args):
+    filename = config.get('screenshot_location', '/tmp/screenshot.png')
+    run(['grim', filename])
+    image = Image(filename)
+    after_screenshot_action(image)
+
+
+def grab_region(args):
+    region = select_region()
+    filename = config.get('screenshot_location', '/tmp/screenshot.png')
+    image = grab_selection(filename, region[0], region[1])
+    after_screenshot_action(image)
+
+
+def grab_monitor(args):
+    monitor_data = fetch_monitors()
+    pretty_name = list(map(lambda monitor: "{:s} ({:s})".format(monitor['model'], monitor['serial']), monitor_data))
+    display_name = list(map(lambda monitor: monitor['name'], monitor_data))
+    options = dict(zip(pretty_name, display_name))
+    option = dmenu('Monitors', options.keys())
+
+    filename = config.get('screenshot_location', '/tmp/screenshot.png')
+    image = grab_output(filename, options[option])
+    after_screenshot_action(image)
+
+
+def after_screenshot_action(image):
+    options = {
+        'Copy to clipboard': 'copy',
+        'Copy screenshot path': 'copy_path',
+        'Upload to server': 'upload'
+    }
+    option = dmenu('Action', options.keys())
+    try:
+        getattr(image, options[option])()
+    except AttributeError:
+        not_implemented()
+
+
+def select_region():
+    slurp_proc = run(['slurp'], stdout=PIPE, stderr=PIPE)
+    out = slurp_proc.stdout.decode().replace('\n', '')
+    err = slurp_proc.stderr.decode().replace('\n', '')
+
+    if slurp_proc.returncode != 0:
+        print(err)
+        sys.exit(3)
+
+    response = out.split(' ')
+    position = response[0].split(',')
+    size = response[1].split('x')
+
+    return position, size
+
+
+def grab_selection(filename, position, size):
+    grim_args = [
+        'grim',
+        '-g',
+        '{:s} {:s}'.format(",".join(position), "x".join(size)),
+        filename
+    ]
+    run(grim_args)
+
+    image = Image(filename)
+    return image
+
+
+def grab_output(filename, output):
+    grim_args = ['grim', '-o', output, filename]
+    call(grim_args)
+
+    image = Image(filename)
+    return image
+
+
+def not_implemented(*args, **kargs):
+    print('Action is not yet implemented')
+    sys.exit(255)
+
+
+class Image:
+    def __init__(self, file_path):
+        self.file_path = file_path
+
+    def copy(self):
+        with open(self.file_path) as file_path:
+            call(['wl-copy'], stdin=file_path)
+
+    def copy_path(self):
+        call(['wl-copy', self.file_path])
+        print('Could not copy to clipboard')
+        sys.exit(1)
+
+    def upload(self):
+        filename = dmenu('Filename', [])
+        destination = "{:s}:{:s}".format(config.get('server'), os.path.join(config.get('server_path'), filename))
+        run(['scp', self.file_path, destination])
+        run(['wl-copy', config.get('url').format(filename)])
+
+
+def get_dmenu_command(prompt):
+    command = config.get('dmenu_command', 'dmenu').split(' ')
+    command.extend(['-p', prompt])
+    return command
+
+
+def dmenu(prompt, options):
+    optionstr = "\n".join(options)
+    with Popen(get_dmenu_command(prompt), stdin=PIPE, stdout=PIPE) as dmenu_proc:
+        output, err = dmenu_proc.communicate(optionstr.encode('UTF-8'))
+    return output.decode().replace('\n', '')
+
+
+def fetch_monitors():
+    monitor_proc = run(['swaymsg', '-t', 'get_outputs'], stdout=PIPE)
+    out = monitor_proc.stdout.decode()
+    monitor_data = json.loads(out)
+    active_monitor_data = list(filter(lambda monitor: monitor['active'] is True, monitor_data))
+    return active_monitor_data
+
+
+if __name__ == "__main__":
+    main()

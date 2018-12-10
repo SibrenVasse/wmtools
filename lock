@@ -1,0 +1,59 @@
+#!/usr/bin/python
+
+import datetime
+import os
+import random
+import subprocess
+import json
+from subprocess import run, PIPE
+
+from sun import Sun
+
+def fetch_monitors():
+    monitor_proc = run(['swaymsg', '-t', 'get_outputs'], stdout=PIPE)
+    out = monitor_proc.stdout.decode()
+    monitor_data = json.loads(out)
+    active_monitor_data = list(filter(lambda monitor: monitor['active'] is True, monitor_data))
+    return active_monitor_data
+
+
+def random_wallpaper():
+    wallpaper_path = os.path.expanduser('~/Wallpapers')
+    wallpaper_dir = os.path.join(wallpaper_path, "Day" if is_day() else "Night", 'Groups')
+    groups = [os.path.join(wallpaper_dir, o) for o in os.listdir(wallpaper_dir) if os.path.isdir(os.path.join(wallpaper_dir, o))]
+    group = random.choice(groups)
+    wallpapers = [os.path.join(group, file) for file in os.listdir(group)]
+    random.shuffle(wallpapers)
+
+    return wallpapers
+
+
+def lock(wallpapers):
+    print('Settings wallpapers for backend Sway')
+    get_outputs_proc = subprocess.Popen(['swaymsg', '-t', 'get_outputs'], stdout=subprocess.PIPE)
+    output, err = get_outputs_proc.communicate()
+    data = json.loads(output)
+    windows = map(lambda output: output['name'], data)
+    args = ["swaylock"]
+    for i, monitor in enumerate(fetch_monitors()):
+        args.extend(['-i', '{:s}:{:s}'.format(monitor['name'], wallpapers[i])])
+
+    print(args)
+    subprocess.call(args)
+
+
+def main():
+    wallpapers = random_wallpaper()
+    lock(wallpapers)
+
+
+def is_day():
+    sun = Sun()
+    coords = {'longitude' : 6.893, 'latitude' : 52.22 }
+    sunrise = sun.getSunriseTime( coords )['datetime']
+    sunset = sun.getSunsetTime( coords )['datetime']
+
+    return datetime.datetime.utcnow() > sunrise and datetime.datetime.utcnow() < sunset
+
+if __name__ == "__main__":
+    main()

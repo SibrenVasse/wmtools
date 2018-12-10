@@ -1,0 +1,92 @@
+#!/usr/bin/python
+
+# save this as Sun.py
+
+from datetime import datetime
+import sys
+import os
+import argparse
+import random
+import subprocess
+import json
+from sun import Sun
+
+
+def main():
+    args = arguments()
+
+    if args.random:
+        wallpapers = random_wallpaper()
+    else:
+        wallpapers = args.wallpaper
+
+    if args.backend == "X11":
+        set_x11_wallpaper(wallpapers)
+    elif args.backend == "Sway":
+        set_sway_wallpaper(wallpapers)
+    else:
+        print('Not nonvalid backend is provided')
+        sys.exit(1)
+
+
+def arguments():
+    parser = argparse.ArgumentParser(description='Setting wallpapers')
+    parser.add_argument('--random', action='store_true')
+    parser.add_argument('--backend', default="X11")
+    parser.add_argument('wallpaper', nargs='*')
+
+    args = parser.parse_args()
+
+    # I realise that this is not a very elegant solution, but
+    # trying to do this using argparse makes me really sad inside
+    if not args.random and args.wallpaper == []:
+        parser.print_help()
+        sys.exit(1)
+    elif args.random and args.wallpaper != []:
+        parser.print_help()
+        sys.exit(1)
+
+    return args
+
+
+def random_wallpaper():
+    wallpaper_path = os.path.expanduser('~/Wallpapers')
+    wallpaper_dir = os.path.join(wallpaper_path, "Day" if is_day() else "Night", 'Groups')
+    groups = [os.path.join(wallpaper_dir, o) for o in os.listdir(wallpaper_dir) if os.path.isdir(os.path.join(wallpaper_dir, o))]
+    group = random.choice(groups)
+    wallpapers = [os.path.join(group, file) for file in os.listdir(group)]
+    random.shuffle(wallpapers)
+
+    return wallpapers
+
+
+def set_x11_wallpaper(wallpapers):
+    args = ['feh']
+    for wallpaper in wallpapers:
+        args.extend(['--bg-scale', wallpaper])
+
+    subprocess.call(args)
+
+
+def set_sway_wallpaper(wallpapers):
+    print('Settings wallpapers for backend Sway')
+    get_outputs_proc = subprocess.Popen(['swaymsg', '-t', 'get_outputs'], stdout=subprocess.PIPE)
+    output, err = get_outputs_proc.communicate()
+    data = json.loads(output)
+    windows = map(lambda output: output['name'], data)
+    for i, window in enumerate(windows):
+        subprocess.call(['swaymsg', 'output', window, 'bg', wallpapers[i], 'fill'])
+
+
+def is_day():
+    sun = Sun()
+    coords = {'longitude': 6.893, 'latitude': 52.22}
+    sunrise = sun.getSunriseTime(coords)['datetime']
+    sunset = sun.getSunsetTime(coords)['datetime']
+
+    return datetime.utcnow() > sunrise and datetime.utcnow() < sunset
+
+
+if __name__ == "__main__":
+    main()
+
