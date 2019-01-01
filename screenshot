@@ -21,10 +21,14 @@ def main():
 def parse_arguments():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(title='action')
+
     interface_parser = subparsers.add_parser('interface')
     interface_parser.set_defaults(func=show_interface)
+
     grab_region_parser = subparsers.add_parser('grab_region')
     grab_region_parser.set_defaults(func=grab_region)
+    grab_window_parser = subparsers.add_parser('grab_window')
+    grab_window_parser.set_defaults(func=grab_window)
     grab_monitor_parser = subparsers.add_parser('grab_monitor')
     grab_monitor_parser.set_defaults(func=grab_monitor)
 
@@ -39,6 +43,7 @@ def parse_arguments():
 def show_interface(args):
     options = {
         'Selection': grab_region,
+        'Active Window': grab_window,
         'Monitor': grab_monitor,
         'Everything': grab_everything
     }
@@ -58,6 +63,23 @@ def grab_region(args):
     region = select_region()
     filename = config.get('screenshot_location', '/tmp/screenshot.png')
     image = grab_selection(filename, region[0], region[1])
+    after_screenshot_action(image)
+
+
+def grab_window(args):
+    window = get_active_window()
+
+    geometry = window['rect']
+    geometry['x'] += window['current_border_width']
+    geometry['y'] += window['deco_rect']['height']
+    geometry['width'] -= (2 * window['current_border_width'])
+    geometry['height'] -= (window['deco_rect']['height'] + window['current_border_width'])
+
+    filename = config.get('screenshot_location', '/tmp/screenshot.png')
+    image = grab_selection(filename,
+                           [geometry['x'], geometry['y']],
+                           [geometry['width'], geometry['height']])
+
     after_screenshot_action(image)
 
 
@@ -86,6 +108,21 @@ def after_screenshot_action(image):
         not_implemented()
 
 
+def find_focus(tree):
+    if tree['focused'] is True:
+        return tree
+    elif 'nodes' in tree:
+        for node in tree['nodes']:
+            node = find_focus(node)
+            if isinstance(node, dict):
+                return node
+
+
+def get_active_window():
+    tree = fetch_tree()
+    return find_focus(tree)
+
+
 def select_region():
     slurp_proc = run(['slurp'], stdout=PIPE, stderr=PIPE)
     out = slurp_proc.stdout.decode().replace('\n', '')
@@ -106,7 +143,8 @@ def grab_selection(filename, position, size):
     grim_args = [
         'grim',
         '-g',
-        '{:s} {:s}'.format(",".join(position), "x".join(size)),
+        '{:s} {:s}'.format(",".join(str(x) for x in position),
+                           "x".join(str(x) for x in size)),
         filename
     ]
     run(grim_args)
@@ -167,6 +205,11 @@ def fetch_monitors():
     monitor_data = json.loads(out)
     active_monitor_data = list(filter(lambda monitor: monitor['active'] is True, monitor_data))
     return active_monitor_data
+
+
+def fetch_tree():
+    tree_proc = run(['swaymsg', '-t', 'get_tree'], stdout=PIPE)
+    return json.loads(tree_proc.stdout.decode())
 
 
 if __name__ == "__main__":
